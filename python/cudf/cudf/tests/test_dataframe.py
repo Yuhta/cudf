@@ -26,6 +26,7 @@ from cudf.core._compat import (
     PANDAS_GE_110,
     PANDAS_GE_120,
     PANDAS_GE_134,
+    PANDAS_GE_150,
     PANDAS_LT_140,
 )
 from cudf.core.buffer.spill_manager import get_global_manager
@@ -286,13 +287,15 @@ def test_append_index(a, b):
         pytest.param(
             {1: [], 2: [], 3: []},
             marks=pytest_xfail(
-                reason="https://github.com/rapidsai/cudf/issues/11080"
+                condition=not PANDAS_GE_150,
+                reason="https://github.com/rapidsai/cudf/issues/11080",
             ),
         ),
         pytest.param(
             [1, 2, 3],
             marks=pytest_xfail(
-                reason="https://github.com/rapidsai/cudf/issues/11080"
+                condition=not PANDAS_GE_150,
+                reason="https://github.com/rapidsai/cudf/issues/11080",
             ),
         ),
     ],
@@ -7207,9 +7210,10 @@ def test_dataframe_append_dataframe(df, other, sort, ignore_index):
         pd.Series([10, 11, 23, 234, 13]),
         pytest.param(
             pd.Series([10, 11, 23, 234, 13], index=[11, 12, 13, 44, 33]),
-            marks=pytest_xfail(
+            marks=pytest.mark.xfail(
+                condition=not PANDAS_GE_150,
                 reason="pandas bug: "
-                "https://github.com/pandas-dev/pandas/issues/35092"
+                "https://github.com/pandas-dev/pandas/issues/35092",
             ),
         ),
         {1: 1},
@@ -8051,44 +8055,34 @@ def test_dataframe_iterrows_itertuples():
                 "c": [0.3234, 0.23432, 0.0],
             }
         ),
-        pytest.param(
-            cudf.DataFrame(
-                {
-                    "int_data": [1, 2, 3],
-                    "str_data": ["hello", "world", "hello"],
-                    "float_data": [0.3234, 0.23432, 0.0],
-                    "timedelta_data": cudf.Series(
-                        [1, 2, 1], dtype="timedelta64[ns]"
-                    ),
-                    "datetime_data": cudf.Series(
-                        [1, 2, 1], dtype="datetime64[ns]"
-                    ),
-                }
-            ),
-            marks=pytest_xfail(
-                reason="https://github.com/rapidsai/cudf/issues/6219"
-            ),
+        cudf.DataFrame(
+            {
+                "int_data": [1, 2, 3],
+                "str_data": ["hello", "world", "hello"],
+                "float_data": [0.3234, 0.23432, 0.0],
+                "timedelta_data": cudf.Series(
+                    [1, 2, 1], dtype="timedelta64[ns]"
+                ),
+                "datetime_data": cudf.Series(
+                    [1, 2, 1], dtype="datetime64[ns]"
+                ),
+            }
         ),
-        pytest.param(
-            cudf.DataFrame(
-                {
-                    "int_data": [1, 2, 3],
-                    "str_data": ["hello", "world", "hello"],
-                    "float_data": [0.3234, 0.23432, 0.0],
-                    "timedelta_data": cudf.Series(
-                        [1, 2, 1], dtype="timedelta64[ns]"
-                    ),
-                    "datetime_data": cudf.Series(
-                        [1, 2, 1], dtype="datetime64[ns]"
-                    ),
-                    "category_data": cudf.Series(
-                        ["a", "a", "b"], dtype="category"
-                    ),
-                }
-            ),
-            marks=pytest_xfail(
-                reason="https://github.com/rapidsai/cudf/issues/6219"
-            ),
+        cudf.DataFrame(
+            {
+                "int_data": [1, 2, 3],
+                "str_data": ["hello", "world", "hello"],
+                "float_data": [0.3234, 0.23432, 0.0],
+                "timedelta_data": cudf.Series(
+                    [1, 2, 1], dtype="timedelta64[ns]"
+                ),
+                "datetime_data": cudf.Series(
+                    [1, 2, 1], dtype="datetime64[ns]"
+                ),
+                "category_data": cudf.Series(
+                    ["a", "a", "b"], dtype="category"
+                ),
+            }
         ),
     ],
 )
@@ -8129,44 +8123,34 @@ def test_describe_misc_include(df, include):
                 "c": [0.3234, 0.23432, 0.0],
             }
         ),
-        pytest.param(
-            cudf.DataFrame(
-                {
-                    "int_data": [1, 2, 3],
-                    "str_data": ["hello", "world", "hello"],
-                    "float_data": [0.3234, 0.23432, 0.0],
-                    "timedelta_data": cudf.Series(
-                        [1, 2, 1], dtype="timedelta64[ns]"
-                    ),
-                    "datetime_data": cudf.Series(
-                        [1, 2, 1], dtype="datetime64[ns]"
-                    ),
-                }
-            ),
-            marks=pytest_xfail(
-                reason="https://github.com/rapidsai/cudf/issues/6219"
-            ),
+        cudf.DataFrame(
+            {
+                "int_data": [1, 2, 3],
+                "str_data": ["hello", "world", "hello"],
+                "float_data": [0.3234, 0.23432, 0.0],
+                "timedelta_data": cudf.Series(
+                    [1, 2, 1], dtype="timedelta64[ns]"
+                ),
+                "datetime_data": cudf.Series(
+                    [1, 2, 1], dtype="datetime64[ns]"
+                ),
+            }
         ),
-        pytest.param(
-            cudf.DataFrame(
-                {
-                    "int_data": [1, 2, 3],
-                    "str_data": ["hello", "world", "hello"],
-                    "float_data": [0.3234, 0.23432, 0.0],
-                    "timedelta_data": cudf.Series(
-                        [1, 2, 1], dtype="timedelta64[ns]"
-                    ),
-                    "datetime_data": cudf.Series(
-                        [1, 2, 1], dtype="datetime64[ns]"
-                    ),
-                    "category_data": cudf.Series(
-                        ["a", "a", "b"], dtype="category"
-                    ),
-                }
-            ),
-            marks=pytest_xfail(
-                reason="https://github.com/rapidsai/cudf/issues/6219"
-            ),
+        cudf.DataFrame(
+            {
+                "int_data": [1, 2, 3],
+                "str_data": ["hello", "world", "hello"],
+                "float_data": [0.3234, 0.23432, 0.0],
+                "timedelta_data": cudf.Series(
+                    [1, 2, 1], dtype="timedelta64[ns]"
+                ),
+                "datetime_data": cudf.Series(
+                    [1, 2, 1], dtype="datetime64[ns]"
+                ),
+                "category_data": cudf.Series(
+                    ["a", "a", "b"], dtype="category"
+                ),
+            }
         ),
     ],
 )
