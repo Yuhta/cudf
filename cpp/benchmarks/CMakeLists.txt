@@ -309,3 +309,6 @@ add_custom_target(
   DEPENDS CUDF_BENCHMARKS
   COMMENT "Custom command for running cudf benchmarks."
 )
+
+ConfigureNVBench(ORC_BENCHMARK io/orc/orc_benchmark.cpp)
+ConfigureNVBench(PARQUET_BENCHMARK io/parquet/parquet_benchmark.cpp)

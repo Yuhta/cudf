@@ -39,7 +39,7 @@ function(jit_preprocess_files)
       VERBATIM
       COMMAND ${CMAKE_COMMAND} -E make_directory "${jit_output_directory}"
       COMMAND
-        "${CMAKE_COMMAND}" -E env LD_LIBRARY_PATH=${CUDAToolkit_LIBRARY_DIR}
+        "${CMAKE_COMMAND}" -E env LD_LIBRARY_PATH=${CUDAToolkit_LIBRARY_DIR}:/home/jimmylu/fbsource/fbcode/third-party2/gcc/11.x/centos7-native/886b5eb/lib64
         $<TARGET_FILE:jitify_preprocess> ${ARG_FILE} -o
         ${CUDF_GENERATED_INCLUDE_DIR}/include/jit_preprocessed_files -i -m -std=c++17
         -remove-unused-globals -D_FILE_OFFSET_BITS=64 -D__CUDACC_RTC__ -I${CUDF_SOURCE_DIR}/include
