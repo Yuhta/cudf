@@ -367,8 +367,8 @@ class datasource {
       return static_cast<uint8_t const*>(_data_ptr);
     }
 
-   private:
     Container _data;
+   private:
     void const* _data_ptr;
     size_t _size;
   };

@@ -247,11 +247,11 @@ struct ColumnChunkDesc {
  * @brief Struct to store raw/intermediate file data before parsing.
  */
 struct file_intermediate_data {
-  std::vector<std::unique_ptr<datasource::buffer>> raw_page_data;
+  std::vector<std::unique_ptr<datasource::buffer>> *raw_page_data;
   rmm::device_buffer decomp_page_data;
-  hostdevice_vector<gpu::ColumnChunkDesc> chunks{};
+  hostdevice_vector<gpu::ColumnChunkDesc>* chunks{};
   hostdevice_vector<gpu::PageInfo> pages_info{};
-  hostdevice_vector<gpu::PageNestingInfo> page_nesting_info{};
+  hostdevice_vector<gpu::PageNestingInfo>* page_nesting_info{};
 };
 
 /**

@@ -24,9 +24,9 @@ namespace cudf::io::detail::parquet {
 
 void reader::impl::decode_page_data(size_t skip_rows, size_t num_rows)
 {
-  auto& chunks       = _file_itm_data.chunks;
+  auto& chunks       = *_file_itm_data.chunks;
   auto& pages        = _file_itm_data.pages_info;
-  auto& page_nesting = _file_itm_data.page_nesting_info;
+  auto& page_nesting = *_file_itm_data.page_nesting_info;
 
   // Should not reach here if there is no page data.
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
@@ -95,7 +95,7 @@ void reader::impl::decode_page_data(size_t skip_rows, size_t num_rows)
     //
     // we do this by only handing out the pointers to the first child we come across.
     //
-    auto* cols = &_output_buffers;
+    auto* cols = _output_buffers;
     for (size_t idx = 0; idx < max_depth; idx++) {
       auto& out_buf = (*cols)[input_col.nesting[idx]];
       cols          = &out_buf.children;
@@ -136,7 +136,7 @@ void reader::impl::decode_page_data(size_t skip_rows, size_t num_rows)
   for (size_t idx = 0; idx < _input_columns.size(); idx++) {
     input_column_info const& input_col = _input_columns[idx];
 
-    auto* cols = &_output_buffers;
+    auto* cols = _output_buffers;
     for (size_t l_idx = 0; l_idx < input_col.nesting_depth(); l_idx++) {
       auto& out_buf = (*cols)[input_col.nesting[l_idx]];
       cols          = &out_buf.children;
@@ -169,7 +169,7 @@ void reader::impl::decode_page_data(size_t skip_rows, size_t num_rows)
     int index                 = pi->nesting - page_nesting.device_ptr();
     gpu::PageNestingInfo* pni = &page_nesting[index];
 
-    auto* cols = &_output_buffers;
+    auto* cols = _output_buffers;
     for (size_t l_idx = 0; l_idx < input_col.nesting_depth(); l_idx++) {
       auto& out_buf = (*cols)[input_col.nesting[l_idx]];
       cols          = &out_buf.children;
@@ -219,16 +219,24 @@ reader::impl::impl(std::size_t chunk_read_limit,
   _reader_column_schema = options.get_column_schema();
 
   // Select only columns required by the options
-  std::tie(_input_columns, _output_buffers, _output_column_schemas) =
+  static std::vector<column_buffer> g_output_buffers;
+  std::vector<column_buffer> output_buffers;
+  std::tie(_input_columns, output_buffers, _output_column_schemas) =
     _metadata->select_columns(options.get_columns(),
                               options.is_enabled_use_pandas_metadata(),
                               _strings_to_categorical,
                               _timestamp_type.id());
+  if (g_output_buffers.empty()) {
+    g_output_buffers = std::move(output_buffers);
+  } else {
+    CUDF_EXPECTS(g_output_buffers.size() == output_buffers.size(), "");
+  }
+  _output_buffers = &g_output_buffers;
 
   // Save the states of the output buffers for reuse in `chunk_read()`.
   // Don't need to do it if we read the file all at once.
   if (_chunk_read_limit > 0) {
-    for (auto const& buff : _output_buffers) {
+    for (auto const& buff : *_output_buffers) {
       _output_buffers_template.emplace_back(column_buffer::empty_like(buff));
     }
   }
@@ -265,7 +273,7 @@ table_with_metadata reader::impl::read_chunk_internal(bool uses_custom_row_bound
 
   // output cudf columns as determined by the top level schema
   auto out_columns = std::vector<std::unique_ptr<column>>{};
-  out_columns.reserve(_output_buffers.size());
+  out_columns.reserve(_output_buffers->size());
 
   if (!has_next() || _chunk_read_info.size() == 0) {
     return finalize_output(out_metadata, out_columns);
@@ -280,17 +288,17 @@ table_with_metadata reader::impl::read_chunk_internal(bool uses_custom_row_bound
   decode_page_data(read_info.skip_rows, read_info.num_rows);
 
   // Create the final output cudf columns.
-  for (size_t i = 0; i < _output_buffers.size(); ++i) {
+  for (size_t i = 0; i < _output_buffers->size(); ++i) {
     auto const metadata = _reader_column_schema.has_value()
                             ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
                             : std::nullopt;
     // Only construct `out_metadata` if `_output_metadata` has not been cached.
-    if (!_output_metadata) {
-      column_name_info& col_name = out_metadata.schema_info.emplace_back("");
-      out_columns.emplace_back(make_column(_output_buffers[i], &col_name, metadata, _stream, _mr));
-    } else {
-      out_columns.emplace_back(make_column(_output_buffers[i], nullptr, metadata, _stream, _mr));
-    }
+    // if (!_output_metadata) {
+    //   column_name_info& col_name = out_metadata.schema_info.emplace_back("");
+    //   out_columns.emplace_back(make_column((*_output_buffers)[i], &col_name, metadata, _stream, _mr));
+    // } else {
+    //   out_columns.emplace_back(make_column((*_output_buffers)[i], nullptr, metadata, _stream, _mr));
+    // }
   }
 
   // Add empty columns if needed.
@@ -301,18 +309,18 @@ table_with_metadata reader::impl::finalize_output(table_metadata& out_metadata,
                                                   std::vector<std::unique_ptr<column>>& out_columns)
 {
   // Create empty columns as needed (this can happen if we've ended up with no actual data to read)
-  for (size_t i = out_columns.size(); i < _output_buffers.size(); ++i) {
+  for (size_t i = out_columns.size(); i < _output_buffers->size(); ++i) {
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info.emplace_back("");
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr));
+      out_columns.emplace_back(io::detail::empty_like((*_output_buffers)[i], &col_name, _stream, _mr));
     } else {
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr));
+      out_columns.emplace_back(io::detail::empty_like((*_output_buffers)[i], nullptr, _stream, _mr));
     }
   }
 
   if (!_output_metadata) {
     // Return column names (must match order of returned columns)
-    out_metadata.column_names.resize(_output_buffers.size());
+    out_metadata.column_names.resize(_output_buffers->size());
     for (size_t i = 0; i < _output_column_schemas.size(); i++) {
       auto const& schema           = _metadata->get_schema(_output_column_schemas[i]);
       out_metadata.column_names[i] = schema.name;
@@ -345,9 +353,9 @@ table_with_metadata reader::impl::read_chunk()
   // Reset the output buffers to their original states (right after reader construction).
   // Don't need to do it if we read the file all at once.
   if (_chunk_read_limit > 0) {
-    _output_buffers.resize(0);
+    _output_buffers->resize(0);
     for (auto const& buff : _output_buffers_template) {
-      _output_buffers.emplace_back(column_buffer::empty_like(buff));
+      _output_buffers->emplace_back(column_buffer::empty_like(buff));
     }
   }
 

@@ -255,6 +255,7 @@ template <typename T = uint8_t>
     }
     if (io_size != 0) {
       auto& source = sources[chunk_source_map[chunk]];
+      CUDF_EXPECTS(!source->is_device_read_preferred(io_size), "");
       if (source->is_device_read_preferred(io_size)) {
         auto buffer        = rmm::device_buffer(io_size, stream);
         auto fut_read_size = source->device_read_async(
@@ -263,8 +264,13 @@ template <typename T = uint8_t>
         page_data[chunk] = datasource::buffer::create(std::move(buffer));
       } else {
         auto const buffer = source->host_read(io_offset, io_size);
-        page_data[chunk] =
-          datasource::buffer::create(rmm::device_buffer(buffer->data(), buffer->size(), stream));
+        if (!page_data[chunk]) {
+          page_data[chunk] =
+            datasource::buffer::create(rmm::device_buffer(buffer->data(), buffer->size(), stream));
+        } else {
+          CUDF_EXPECTS(buffer->size() == page_data[chunk]->size(), "");
+          static_cast<datasource::owning_buffer<rmm::device_buffer>&>(*page_data[chunk])._data.copy_async(buffer->data(), buffer->size());
+        }
       }
       auto d_compdata = page_data[chunk]->data();
       do {
@@ -523,9 +529,8 @@ void decode_page_headers(hostdevice_vector<gpu::ColumnChunkDesc>& chunks,
 
 void reader::impl::allocate_nesting_info()
 {
-  auto const& chunks      = _file_itm_data.chunks;
+  auto const& chunks      = *_file_itm_data.chunks;
   auto& pages             = _file_itm_data.pages_info;
-  auto& page_nesting_info = _file_itm_data.page_nesting_info;
 
   // compute total # of page_nesting infos needed and allocate space. doing this in one
   // buffer to keep it to a single gpu allocation
@@ -538,7 +543,9 @@ void reader::impl::allocate_nesting_info()
       return total + (per_page_nesting_info_size * chunk.num_data_pages);
     });
 
-  page_nesting_info = hostdevice_vector<gpu::PageNestingInfo>{total_page_nesting_infos, _stream};
+  static hostdevice_vector<gpu::PageNestingInfo> g_page_nesting_info{total_page_nesting_infos, _stream};
+  _file_itm_data.page_nesting_info = &g_page_nesting_info;
+  auto& page_nesting_info = *_file_itm_data.page_nesting_info;
 
   // retrieve from the gpu so we can update
   pages.device_to_host(_stream, true);
@@ -646,21 +653,26 @@ void reader::impl::load_and_decompress_data(std::vector<row_group_info> const& r
   // This function should never be called if `num_rows == 0`.
   CUDF_EXPECTS(num_rows > 0, "Number of reading rows must not be zero.");
 
-  auto& raw_page_data    = _file_itm_data.raw_page_data;
   auto& decomp_page_data = _file_itm_data.decomp_page_data;
-  auto& chunks           = _file_itm_data.chunks;
   auto& pages_info       = _file_itm_data.pages_info;
 
   // Descriptors for all the chunks that make up the selected columns
   const auto num_input_columns = _input_columns.size();
   const auto num_chunks        = row_groups_info.size() * num_input_columns;
-  chunks                       = hostdevice_vector<gpu::ColumnChunkDesc>(0, num_chunks, _stream);
+
+  static hostdevice_vector<gpu::ColumnChunkDesc> g_chunks(0, num_chunks, _stream);
+  g_chunks.clear();
+  _file_itm_data.chunks = &g_chunks;
+  auto& chunks = *_file_itm_data.chunks;
 
   // Association between each column chunk and its source
   std::vector<size_type> chunk_source_map(num_chunks);
 
   // Tracker for eventually deallocating compressed and uncompressed data
-  raw_page_data = std::vector<std::unique_ptr<datasource::buffer>>(num_chunks);
+  static std::vector<std::unique_ptr<datasource::buffer>> g_raw_page_data(num_chunks);
+  CUDF_EXPECTS(g_raw_page_data.size() == num_chunks, "");
+  _file_itm_data.raw_page_data = &g_raw_page_data;
+  auto& raw_page_data    = *_file_itm_data.raw_page_data;
 
   // Keep track of column chunk file offsets
   std::vector<size_t> column_chunk_offsets(num_chunks);
@@ -1266,7 +1278,7 @@ void reader::impl::preprocess_pages(size_t skip_rows,
                                     bool uses_custom_row_bounds,
                                     size_t chunk_read_limit)
 {
-  auto& chunks = _file_itm_data.chunks;
+  auto& chunks = *_file_itm_data.chunks;
   auto& pages  = _file_itm_data.pages_info;
 
   // iterate over all input columns and determine if they contain lists so we can further
@@ -1276,7 +1288,7 @@ void reader::impl::preprocess_pages(size_t skip_rows,
     auto const& input_col  = _input_columns[idx];
     size_t const max_depth = input_col.nesting_depth();
 
-    auto* cols = &_output_buffers;
+    auto* cols = _output_buffers;
     for (size_t l_idx = 0; l_idx < max_depth; l_idx++) {
       auto& out_buf = (*cols)[input_col.nesting[l_idx]];
       cols          = &out_buf.children;
@@ -1418,7 +1430,7 @@ void reader::impl::preprocess_pages(size_t skip_rows,
 
 void reader::impl::allocate_columns(size_t skip_rows, size_t num_rows, bool uses_custom_row_bounds)
 {
-  auto const& chunks = _file_itm_data.chunks;
+  auto const& chunks = *_file_itm_data.chunks;
   auto& pages        = _file_itm_data.pages_info;
 
   // Should not reach here if there is no page data.
@@ -1446,30 +1458,35 @@ void reader::impl::allocate_columns(size_t skip_rows, size_t num_rows, bool uses
   // buffers if they are not part of a list hierarchy. mark down
   // if we have any list columns that need further processing.
   bool has_lists = false;
+  static bool output_buffers_created = false;
   for (size_t idx = 0; idx < _input_columns.size(); idx++) {
     auto const& input_col  = _input_columns[idx];
     size_t const max_depth = input_col.nesting_depth();
 
-    auto* cols = &_output_buffers;
-    for (size_t l_idx = 0; l_idx < max_depth; l_idx++) {
-      auto& out_buf = (*cols)[input_col.nesting[l_idx]];
-      cols          = &out_buf.children;
+    if (!output_buffers_created) {
+      auto* cols = _output_buffers;
+      for (size_t l_idx = 0; l_idx < max_depth; l_idx++) {
+        auto& out_buf = (*cols)[input_col.nesting[l_idx]];
+        cols          = &out_buf.children;
 
-      // if this has a list parent, we have to get column sizes from the
-      // data computed during gpu::ComputePageSizes
-      if (out_buf.user_data & PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT) {
-        has_lists = true;
-      }
-      // if we haven't already processed this column because it is part of a struct hierarchy
-      else if (out_buf.size == 0) {
-        // add 1 for the offset if this is a list column
-        out_buf.create(
-          out_buf.type.id() == type_id::LIST && l_idx < max_depth ? num_rows + 1 : num_rows,
-          _stream,
-          _mr);
+        // if this has a list parent, we have to get column sizes from the
+        // data computed during gpu::ComputePageSizes
+        if (out_buf.user_data & PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT) {
+          has_lists = true;
+        }
+        // if we haven't already processed this column because it is part of a struct hierarchy
+        else if (out_buf.size == 0) {
+          // add 1 for the offset if this is a list column
+          out_buf.create(
+              out_buf.type.id() == type_id::LIST && l_idx < max_depth ? num_rows + 1 : num_rows,
+              _stream,
+              _mr);
+        }
       }
     }
   }
+  output_buffers_created = true;
+  CUDF_EXPECTS(!has_lists, "");
 
   // compute output column sizes by examining the pages of the -input- columns
   if (has_lists) {
@@ -1480,7 +1497,7 @@ void reader::impl::allocate_columns(size_t skip_rows, size_t num_rows, bool uses
       auto src_col_schema   = input_col.schema_idx;
       size_t max_depth      = input_col.nesting_depth();
 
-      auto* cols = &_output_buffers;
+      auto* cols = _output_buffers;
       for (size_t l_idx = 0; l_idx < input_col.nesting_depth(); l_idx++) {
         auto& out_buf = (*cols)[input_col.nesting[l_idx]];
         cols          = &out_buf.children;

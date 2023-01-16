@@ -56,6 +56,10 @@ class hostdevice_vector {
     d_data.resize(max_size, stream);
   }
 
+  void clear() {
+    h_data.clear();
+  }
+
   void push_back(const T& data)
   {
     CUDF_EXPECTS(size() < capacity(),
