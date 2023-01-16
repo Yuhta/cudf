@@ -699,13 +699,13 @@ target_link_options(cudf PRIVATE "$<HOST_LINK:${CUDF_BINARY_DIR}/fatbin.ld>")
 
 add_library(cudf::cudf ALIAS cudf)
 
-add_executable(orc_benchmark src/io/orc_benchmark.cpp)
+add_executable(decode_benchmark src/io/decode_benchmark.cpp)
 target_include_directories(
-  orc_benchmark PUBLIC
+  decode_benchmark PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}>"
   "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
   )
-target_link_libraries(orc_benchmark PRIVATE cudf cudf_benchmark_common)
+target_link_libraries(decode_benchmark PRIVATE cudf cudf_benchmark_common)
 
 # ##################################################################################################
 # * tests and benchmarks --------------------------------------------------------------------------
